@@ -1,104 +1,88 @@
 import os
 import subprocess
-import requests
-from flask import Flask, jsonify
+import time
+from flask import Flask, Response
 
 app = Flask(__name__)
 
 # 🔹 Directories & Paths
 HLS_DIR = "/workspace/hls"
 FFMPEG_PATH = "/workspace/ffmpeg"
-AFTER_M3U_PATH = "/workspace/after.m3u"
-PLAYLIST_URL = "https://your-m3u-source-url.com/playlist.m3u"
+FFMPEG_URL = "https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-i686-static.tar.xz"
+PLAYLIST_FILE = "playlist.m3u"
 
-# 🔹 Ensure required directories exist
+# 🔹 Ensure HLS directory exists
 os.makedirs(HLS_DIR, exist_ok=True)
 
-FFMPEG_URL = "https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-i686-static.tar.xz"
-
+# 🔹 FFmpeg Setup
 def setup_ffmpeg():
     if os.path.exists(FFMPEG_PATH):
-        print("FFmpeg already installed.")
+        print("✅ FFmpeg already installed.")
         return
 
-    print("Downloading FFmpeg...")
+    print("⏳ Downloading & Installing FFmpeg...")
     subprocess.run(["wget", "-O", "ffmpeg.tar.xz", FFMPEG_URL], check=True)
     subprocess.run(["tar", "xf", "ffmpeg.tar.xz"], check=True)
 
-    ffmpeg_folder = next((entry for entry in os.listdir() if entry.startswith("ffmpeg-") and os.path.isdir(entry)), None)
+    ffmpeg_folder = next((d for d in os.listdir() if d.startswith("ffmpeg-") and os.path.isdir(d)), None)
     if not ffmpeg_folder:
-        raise FileNotFoundError("FFmpeg folder not found after extraction.")
+        raise FileNotFoundError("⚠️ FFmpeg folder not found!")
 
-    ffmpeg_binary_path = os.path.join(ffmpeg_folder, "ffmpeg")
-    if not os.path.isfile(ffmpeg_binary_path):
-        raise FileNotFoundError("FFmpeg binary not found inside extracted folder.")
-
-    subprocess.run(["mv", ffmpeg_binary_path, FFMPEG_PATH], check=True)
+    subprocess.run(["mv", os.path.join(ffmpeg_folder, "ffmpeg"), FFMPEG_PATH], check=True)
     subprocess.run(["chmod", "+x", FFMPEG_PATH], check=True)
-    print("FFmpeg setup complete.")
+    print("✅ FFmpeg Installed Successfully!")
 
 setup_ffmpeg()
 
-# 🔹 Fetch and Parse M3U Playlist
-def parse_m3u():
-    try:
-        response = requests.get(PLAYLIST_URL, timeout=10)
-        response.raise_for_status()
-        lines = response.text.splitlines()
-        streams = [line for line in lines if line.startswith("http")]
-        return streams
-    except requests.RequestException as e:
-        print(f"Error fetching playlist: {e}")
-        return []
+# 🔹 Load & Parse Playlist
+def load_playlist():
+    with open(PLAYLIST_FILE, "r", encoding="utf-8") as f:
+        lines = [line.strip() for line in f if line.strip()]
+    return lines
 
-# 🔹 Restream Channel to HLS
-def restream_to_hls(url, channel_id):
-    hls_folder = os.path.join(HLS_DIR, channel_id)
-    hls_output = os.path.join(hls_folder, "index.m3u8")
+def parse_m3u(lines):
+    channels = []
+    i = 0
+    while i < len(lines):
+        if lines[i].startswith("#EXTINF"):
+            extinf = lines[i]
+            if i + 1 < len(lines) and not lines[i + 1].startswith("#EXTINF"):
+                url = lines[i + 1]
+                stream_url = restream_channel(url)
+                if stream_url:
+                    channels.append(f"{extinf}\n{stream_url}")
+        i += 1
+    return channels
 
-    os.makedirs(hls_folder, exist_ok=True)
+# 🔹 Restream Channel with FFmpeg
+def restream_channel(url):
+    stream_id = hash(url) % 1000000
+    hls_output = f"{HLS_DIR}/channel_{stream_id}.m3u8"
 
-    cmd = [
-        FFMPEG_PATH, "-i", url, "-c:v", "copy", "-c:a", "aac", "-b:a", "128k",
-        "-f", "hls", "-hls_time", "5", "-hls_list_size", "10", "-hls_flags",
-        "delete_segments", hls_output
+    # 🔹 Run FFmpeg in the background
+    ffmpeg_cmd = [
+        FFMPEG_PATH, "-i", url, "-c:v", "libx264", "-preset", "veryfast", "-b:v", "1200k",
+        "-c:a", "aac", "-b:a", "128k", "-f", "hls", "-hls_time", "6", "-hls_list_size", "5",
+        "-hls_flags", "delete_segments", hls_output
     ]
 
-    try:
-        subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        return f"/hls/{channel_id}/index.m3u8"
-    except Exception as e:
-        print(f"Error restreaming {url}: {e}")
-        return None
+    subprocess.Popen(ffmpeg_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    time.sleep(2)  # Let FFmpeg start
 
-# 🔹 Generate M3U Playlist & Update after.m3u
-@app.route("/playlist", methods=["GET"])
-def generate_playlist():
-    channels = parse_m3u()
-    if not channels:
-        return jsonify({"error": "No valid streams found"}), 500
+    # Return the public HLS stream URL
+    return f"https://{os.getenv('KOYEB_PUBLIC_DOMAIN')}/hls/channel_{stream_id}.m3u8"
 
-    playlist_content = "#EXTM3U\n"
-    hls_links = []
+# 🔹 Generate & Serve New M3U Playlist
+@app.route("/")
+def home():
+    return "✅ IPTV Backend Running!"
 
-    for i, url in enumerate(channels[:10]):  # Limit to 10 channels
-        hls_url = restream_to_hls(url, f"channel_{i}")
-        if hls_url:
-            entry = f"#EXTINF:-1,Channel {i+1}\n{hls_url}"
-            playlist_content += entry + "\n"
-            hls_links.append(entry)
+@app.route("/playlist")
+def serve_playlist():
+    lines = load_playlist()
+    channels = parse_m3u(lines)
+    m3u_data = "#EXTM3U\n" + "\n".join(channels)
+    return Response(m3u_data, mimetype="text/plain")
 
-    # 🔹 Update after.m3u with the new playlist
-    with open(AFTER_M3U_PATH, "w") as after_m3u:
-        after_m3u.write("#EXTM3U\n" + "\n".join(hls_links))
-
-    return playlist_content, 200, {"Content-Type": "application/x-mpegURL"}
-
-# 🔹 Health Check Route
-@app.route("/", methods=["GET"])
-def health_check():
-    return "Server is running!", 200
-
-# 🔹 Run Flask
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000)
