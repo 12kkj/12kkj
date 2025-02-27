@@ -17,4 +17,4 @@ RUN apt-get update && apt-get install -y ffmpeg
 EXPOSE 5000
 
 # Start the server using Gunicorn for better performance
-CMD ["gunicorn", "-w", "4", "-b", "0.0.0.0:5000", "server:app"]
+CMD ["gunicorn", "-w", "4", "-b", "0.0.0.0:5000","--bind", "0.0.0.0:5000", "server:app"]
