@@ -8,10 +8,11 @@ app = Flask(__name__)
 # 🔹 Directories & Paths
 HLS_DIR = "/workspace/hls"
 FFMPEG_PATH = "/workspace/ffmpeg"
-FFMPEG_URL = "https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-i686-static.tar.xz"
+# Use the 64-bit (amd64) FFmpeg build for compatibility
+FFMPEG_URL = "https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz"
 PLAYLIST_FILE = "playlist.m3u"
 
-# 🔹 Ensure HLS directory exists
+# Ensure HLS directory exists
 os.makedirs(HLS_DIR, exist_ok=True)
 
 # 🔹 FFmpeg Setup
@@ -26,7 +27,7 @@ def setup_ffmpeg():
 
     ffmpeg_folder = next((d for d in os.listdir() if d.startswith("ffmpeg-") and os.path.isdir(d)), None)
     if not ffmpeg_folder:
-        raise FileNotFoundError("⚠️ FFmpeg folder not found!")
+        raise FileNotFoundError("⚠️ FFmpeg folder not found after extraction!")
 
     subprocess.run(["mv", os.path.join(ffmpeg_folder, "ffmpeg"), FFMPEG_PATH], check=True)
     subprocess.run(["chmod", "+x", FFMPEG_PATH], check=True)
@@ -34,7 +35,7 @@ def setup_ffmpeg():
 
 setup_ffmpeg()
 
-# 🔹 Load & Parse Playlist
+# 🔹 Load & Parse Playlist File
 def load_playlist():
     with open(PLAYLIST_FILE, "r", encoding="utf-8") as f:
         lines = [line.strip() for line in f if line.strip()]
@@ -46,6 +47,7 @@ def parse_m3u(lines):
     while i < len(lines):
         if lines[i].startswith("#EXTINF"):
             extinf = lines[i]
+            # Expect the next line to be the URL
             if i + 1 < len(lines) and not lines[i + 1].startswith("#EXTINF"):
                 url = lines[i + 1]
                 stream_url = restream_channel(url)
@@ -54,25 +56,27 @@ def parse_m3u(lines):
         i += 1
     return channels
 
-# 🔹 Restream Channel with FFmpeg
+# 🔹 Restream a Channel Using FFmpeg
 def restream_channel(url):
     stream_id = hash(url) % 1000000
     hls_output = f"{HLS_DIR}/channel_{stream_id}.m3u8"
 
-    # 🔹 Run FFmpeg in the background
+    # Run FFmpeg in the background to create an HLS stream
     ffmpeg_cmd = [
-        FFMPEG_PATH, "-i", url, "-c:v", "libx264", "-preset", "veryfast", "-b:v", "1200k",
-        "-c:a", "aac", "-b:a", "128k", "-f", "hls", "-hls_time", "6", "-hls_list_size", "5",
+        FFMPEG_PATH, "-i", url,
+        "-c:v", "libx264", "-preset", "veryfast", "-b:v", "1200k",
+        "-c:a", "aac", "-b:a", "128k",
+        "-f", "hls", "-hls_time", "6", "-hls_list_size", "5",
         "-hls_flags", "delete_segments", hls_output
     ]
 
     subprocess.Popen(ffmpeg_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    time.sleep(2)  # Let FFmpeg start
+    time.sleep(2)  # Give FFmpeg a moment to start
 
-    # Return the public HLS stream URL
+    # Return the public URL for this HLS stream using the KOYEB_PUBLIC_DOMAIN env variable
     return f"https://{os.getenv('KOYEB_PUBLIC_DOMAIN')}/hls/channel_{stream_id}.m3u8"
 
-# 🔹 Generate & Serve New M3U Playlist
+# 🔹 Flask Routes
 @app.route("/")
 def home():
     return "✅ IPTV Backend Running!"
