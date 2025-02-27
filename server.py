@@ -1,8 +1,12 @@
-from flask import Flask, Response, request
+from flask import Flask, Response
+import os
 import subprocess
-import re
 
 app = Flask(__name__)
+
+# Path to store HLS streams
+HLS_DIR = "/app/hls/"
+os.makedirs(HLS_DIR, exist_ok=True)
 
 # Load and clean M3U file from disk
 def load_playlist():
@@ -17,50 +21,52 @@ def parse_m3u(lines):
     while i < len(lines):
         if lines[i].startswith("#EXTINF"):
             extinf_line = lines[i].strip()
-
-            # Ensure there is a next line (URL) and it's not another #EXTINF
+            
             if i + 1 < len(lines) and not lines[i + 1].startswith("#EXTINF"):
                 original_url = lines[i + 1].strip()
-                
-                # Generate a restreamed URL through our Flask proxy
-                restream_url = f"https://{request.host}/stream?url={original_url}"
-                
-                channels.append(f"{extinf_line}\n{restream_url}")
+                hls_url = restream_to_hls(original_url)
+                if hls_url:
+                    channels.append(f"{extinf_line}\n{hls_url}")
             else:
                 print(f"⚠️ Skipping: {extinf_line} (No valid URL found)")
         
         i += 1
     return channels
 
-# Generate an updated M3U playlist
+# Restream function
+def restream_to_hls(source_url):
+    stream_name = source_url.split("/")[-1].split("?")[0].replace(".", "_")
+    hls_path = f"{HLS_DIR}{stream_name}.m3u8"
+    hls_url = f"/hls/{stream_name}.m3u8"
+
+    # Run FFmpeg in the background
+    cmd = [
+        "ffmpeg", "-i", source_url,
+        "-c:v", "libx264", "-preset", "ultrafast", "-crf", "18",
+        "-c:a", "aac", "-b:a", "128k",
+        "-f", "hls", "-hls_time", "6", "-hls_list_size", "10", "-hls_flags", "delete_segments",
+        hls_path
+    ]
+    subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    return hls_url
+
+# Generate new M3U playlist
 def generate_m3u(channels):
     return "#EXTM3U\n" + "\n".join(channels)
 
-# Route to generate restreamed playlist
+@app.route("/")
+def home():
+    return "IPTV Backend is Running!"
+
 @app.route("/playlist")
 def serve_playlist():
     lines = load_playlist()
     channels = parse_m3u(lines)
     return Response(generate_m3u(channels), mimetype="text/plain")
 
-# FFmpeg-powered restreaming
-@app.route("/stream")
-def restream():
-    original_url = request.args.get("url")
-    if not original_url:
-        return "Error: No URL provided", 400
-
-    # Start FFmpeg process for restreaming
-    ffmpeg_command = [
-        "ffmpeg", "-i", original_url, "-c:v", "copy", "-c:a", "aac",
-        "-f", "hls", "-hls_time", "5", "-hls_list_size", "10", "pipe:1"
-    ]
-    
-    return Response(subprocess.Popen(ffmpeg_command, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL).stdout, mimetype="application/vnd.apple.mpegurl")
-
-@app.route("/")
-def home():
-    return "IPTV Restreaming Backend is Running!"
+@app.route("/hls/<path:filename>")
+def serve_hls(filename):
+    return Response(open(f"{HLS_DIR}{filename}", "rb").read(), mimetype="application/vnd.apple.mpegurl")
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000)
