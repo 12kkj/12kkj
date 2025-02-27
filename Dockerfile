@@ -4,17 +4,17 @@ FROM jrottenberg/ffmpeg:4.4-ubuntu
 # Install Python and dependencies
 RUN apt-get update && apt-get install -y python3 python3-pip
 
-# Set the working directory
+# Set working directory
 WORKDIR /app
 
-# Copy the application files
+# Copy project files
 COPY . /app
 
-# Install Python dependencies
+# Install required Python libraries
 RUN pip3 install -r requirements.txt
 
-# Expose the port
+# Expose Flask server port
 EXPOSE 5000
 
-# Run the server
+# Run Flask application
 CMD ["python3", "server.py"]
