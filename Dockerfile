@@ -1,10 +1,13 @@
 # Use a minimal Python image
 FROM python:3.9-slim
 
-# Install FFmpeg properly
-RUN apt-get update && apt-get install -y ffmpeg
+# Install dependencies
+RUN apt-get update && apt-get install -y ffmpeg && apt-get clean
 
-# Set the working directory inside the container
+# Verify FFmpeg installation
+RUN ffmpeg -version
+
+# Set the working directory
 WORKDIR /app
 
 # Copy all project files
@@ -13,11 +16,11 @@ COPY . /app
 # Install Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Create HLS output folder
-RUN mkdir -p hls_output
+# Ensure HLS output folder exists
+RUN mkdir -p /app/hls_output
 
-# Expose port 5000 for Flask
+# Expose port 5000
 EXPOSE 5000
 
-# Start the server using Gunicorn
+# Start the server with Gunicorn
 CMD ["gunicorn", "--bind", "0.0.0.0:5000", "server:app"]
