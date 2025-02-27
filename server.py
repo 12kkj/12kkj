@@ -1,4 +1,4 @@
-from flask import Flask, Response, request, jsonify
+from flask import Flask, Response, request, jsonify, send_file
 import subprocess
 import os
 
@@ -22,8 +22,8 @@ def start_ffmpeg(channel_name, channel_url):
     command = [
         "ffmpeg", "-i", channel_url, "-c:v", "libx264", "-preset", "ultrafast",
         "-c:a", "aac", "-strict", "experimental", "-f", "hls",
-        "-hls_time", "5", "-hls_list_size", "10", "-hls_flags", "delete_segments",
-        output_hls
+        "-hls_time", "5", "-hls_list_size", "5", "-hls_flags", "delete_segments",
+        "-start_number", "1", output_hls
     ]
 
     # Start the process and store reference
@@ -34,7 +34,11 @@ def start_ffmpeg(channel_name, channel_url):
 
 # Load and parse the original M3U playlist
 def load_playlist():
-    with open("playlist.m3u", "r", encoding="utf-8") as f:
+    playlist_path = "playlist.m3u"
+    if not os.path.exists(playlist_path):
+        return []
+
+    with open(playlist_path, "r", encoding="utf-8") as f:
         lines = [line.strip() for line in f if line.strip()]
     return lines
 
@@ -76,8 +80,7 @@ def serve_playlist():
 def serve_hls(channel_name):
     hls_path = f"{HLS_OUTPUT_FOLDER}/{channel_name}.m3u8"
     if os.path.exists(hls_path):
-        with open(hls_path, "r") as f:
-            return Response(f.read(), mimetype="application/vnd.apple.mpegurl")
+        return send_file(hls_path, mimetype="application/vnd.apple.mpegurl")
     return "Channel not found", 404
 
 @app.route("/start_stream/<channel_name>/<path:channel_url>")
