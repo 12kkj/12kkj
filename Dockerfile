@@ -1,20 +1,20 @@
-# Use the official Python image
+# Use the official lightweight Python image
 FROM python:3.9
 
-# Install FFmpeg
-RUN apt-get update && apt-get install -y ffmpeg
-
-# Set the working directory
+# Set the working directory inside the container
 WORKDIR /app
 
 # Copy all project files into the container
 COPY . /app
 
 # Install dependencies
-RUN pip install -r requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt
 
-# Expose port 5000
+# Ensure FFmpeg is installed for HLS support
+RUN apt-get update && apt-get install -y ffmpeg
+
+# Expose port 5000 for Flask app
 EXPOSE 5000
 
-# Run the application
-CMD ["python", "server.py"]
+# Start the server using Gunicorn for better performance
+CMD ["gunicorn", "-w", "4", "-b", "0.0.0.0:5000", "server:app"]
