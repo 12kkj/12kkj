@@ -1,59 +1,81 @@
 import os
 import subprocess
+import requests
 from flask import Flask, jsonify, request
 
 app = Flask(__name__)
 
-# Function to download FFmpeg if not available
-def install_ffmpeg():
-    if not os.path.exists("ffmpeg"):
+# 🔹 Directory to store HLS streams
+HLS_DIR = "/workspace/hls"
+FFMPEG_PATH = "/workspace/ffmpeg"
+PLAYLIST_URL = "https://your-m3u-source-url.com/playlist.m3u"
+
+# 🔹 Ensure HLS directory exists
+os.makedirs(HLS_DIR, exist_ok=True)
+
+# 🔹 Download & setup FFmpeg
+def setup_ffmpeg():
+    if not os.path.exists(FFMPEG_PATH):
         print("Downloading FFmpeg...")
-        os.system("curl -L https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-i686-static.tar.xz -o ffmpeg.tar.xz")
-        os.system("tar -xf ffmpeg.tar.xz --strip-components=1 --wildcards '*/ffmpeg'")
-        os.system("rm -f ffmpeg.tar.xz")
-        os.system("chmod +x ffmpeg")
+        ffmpeg_url = "https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-i686-static.tar.xz"
+        subprocess.run(["wget", "-O", "ffmpeg.tar.xz", ffmpeg_url], check=True)
+        subprocess.run(["tar", "xf", "ffmpeg.tar.xz"], check=True)
+        subprocess.run(["mv", "ffmpeg-*/ffmpeg", FFMPEG_PATH], check=True)
+        subprocess.run(["chmod", "+x", FFMPEG_PATH], check=True)
         print("FFmpeg installed!")
 
-# Call FFmpeg installer on startup
-install_ffmpeg()
+setup_ffmpeg()
 
-# Function to convert IPTV stream to HLS format
-def restream_to_hls(original_url, output_file):
+# 🔹 Function to process M3U playlist
+def parse_m3u():
+    try:
+        response = requests.get(PLAYLIST_URL, timeout=10)
+        response.raise_for_status()
+        lines = response.text.splitlines()
+        streams = [line for line in lines if line.startswith("http")]
+        return streams
+    except requests.RequestException as e:
+        print(f"Error fetching playlist: {e}")
+        return []
+
+# 🔹 Function to restream channel to HLS
+def restream_to_hls(url, channel_id):
+    hls_output = f"{HLS_DIR}/{channel_id}/index.m3u8"
+    os.makedirs(f"{HLS_DIR}/{channel_id}", exist_ok=True)
+
     cmd = [
-        "./ffmpeg", "-i", original_url, "-c:v", "copy", "-c:a", "aac",
-        "-b:a", "128k", "-f", "hls", "-hls_time", "10", "-hls_list_size", "5", output_file
+        FFMPEG_PATH, "-i", url, "-c:v", "copy", "-c:a", "aac", "-b:a", "128k",
+        "-f", "hls", "-hls_time", "5", "-hls_list_size", "10", "-hls_flags",
+        "delete_segments", hls_output
     ]
-    
-    subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    return output_file
 
-# Sample IPTV sources
-IPTV_SOURCES = {
-    "Channel 1": "http://example.com/stream1.ts",
-    "Channel 2": "http://example.com/stream2.m3u8",
-    "Channel 3": "http://example.com/stream3.mp4",
-}
+    try:
+        subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        return f"/hls/{channel_id}/index.m3u8"
+    except Exception as e:
+        print(f"Error restreaming {url}: {e}")
+        return None
 
-# API Endpoint to generate M3U playlist
+# 🔹 Flask Route to generate M3U playlist
 @app.route("/playlist", methods=["GET"])
 def generate_playlist():
+    channels = parse_m3u()
+    if not channels:
+        return jsonify({"error": "No valid streams found"}), 500
+
     playlist_content = "#EXTM3U\n"
-    
-    for name, url in IPTV_SOURCES.items():
-        hls_output = f"{name.replace(' ', '_')}.m3u8"
-        restream_to_hls(url, hls_output)
-        
-        playlist_content += f"#EXTINF:-1,{name}\n"
-        playlist_content += f"https://nutty-heda-kkkjj-65a305de.koyeb.app/{hls_output}\n"
+    for i, url in enumerate(channels[:10]):  # Limit to 10 channels
+        hls_url = restream_to_hls(url, f"channel_{i}")
+        if hls_url:
+            playlist_content += f"#EXTINF:-1,Channel {i+1}\n{hls_url}\n"
 
-    return playlist_content, 200, {'Content-Type': 'text/plain'}
+    return playlist_content, 200, {"Content-Type": "application/x-mpegURL"}
 
-# Serve HLS files
-@app.route("/<path:filename>", methods=["GET"])
-def serve_hls(filename):
-    return f"Serving HLS file: {filename}"
+# 🔹 Health Check Route
+@app.route("/", methods=["GET"])
+def health_check():
+    return "Server is running!", 200
 
-# Run Flask App
+# 🔹 Run Flask
 if __name__ == "__main__":
-  app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
-
+    app.run(host="0.0.0.0", port=5000)
