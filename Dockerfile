@@ -1,20 +1,20 @@
-# Use official Python image
-FROM python:3.13
+# Use a base image with Python and FFmpeg
+FROM jrottenberg/ffmpeg:4.4-ubuntu
 
-# Install FFmpeg and dependencies
-RUN apt update && apt install -y ffmpeg
+# Install Python and dependencies
+RUN apt-get update && apt-get install -y python3 python3-pip
 
-# Set the working directory inside the container
+# Set the working directory
 WORKDIR /app
 
-# Copy all files from the repository into the container
+# Copy the application files
 COPY . /app
 
 # Install Python dependencies
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip3 install -r requirements.txt
 
-# Expose port 5000
+# Expose the port
 EXPOSE 5000
 
 # Run the server
-CMD ["python", "server.py"]
+CMD ["python3", "server.py"]
