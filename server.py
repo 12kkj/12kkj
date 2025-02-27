@@ -1,91 +1,97 @@
-from flask import Flask, Response, send_file
-import os
+from flask import Flask, Response, request, jsonify
 import subprocess
+import os
 
 app = Flask(__name__)
 
-# Path to the original playlist file
-PLAYLIST_FILE = "playlist.m3u"
+# Directory for storing HLS output
+HLS_OUTPUT_FOLDER = "hls_output"
+os.makedirs(HLS_OUTPUT_FOLDER, exist_ok=True)
 
-# Path to the generated playlist with restreamed links
-OUTPUT_PLAYLIST = "after.m3u"
+# Store active streams
+active_streams = {}
 
-# HLS output directory
-HLS_DIR = "hls"
-os.makedirs(HLS_DIR, exist_ok=True)
+# Function to start FFmpeg HLS restreaming
+def start_ffmpeg(channel_name, channel_url):
+    output_hls = f"{HLS_OUTPUT_FOLDER}/{channel_name}.m3u8"
 
+    # Check if the stream is already running
+    if channel_name in active_streams:
+        return output_hls
 
+    command = [
+        "ffmpeg", "-i", channel_url, "-c:v", "libx264", "-preset", "ultrafast",
+        "-c:a", "aac", "-strict", "experimental", "-f", "hls",
+        "-hls_time", "5", "-hls_list_size", "10", "-hls_flags", "delete_segments",
+        output_hls
+    ]
+
+    # Start the process and store reference
+    process = subprocess.Popen(command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    active_streams[channel_name] = process
+
+    return output_hls
+
+# Load and parse the original M3U playlist
 def load_playlist():
-    """Load and clean the M3U file from disk."""
-    if not os.path.exists(PLAYLIST_FILE):
-        return []
-    with open(PLAYLIST_FILE, "r", encoding="utf-8") as f:
-        lines = [line.strip() for line in f if line.strip()]  # Remove blank lines
+    with open("playlist.m3u", "r", encoding="utf-8") as f:
+        lines = [line.strip() for line in f if line.strip()]
     return lines
 
-
-def parse_m3u(lines):
-    """Parse the M3U file and extract channels with URLs."""
-    channels = []
+# Convert original M3U to new M3U with permanent HLS links
+def generate_m3u():
+    lines = load_playlist()
+    new_channels = []
     i = 0
+
     while i < len(lines):
         if lines[i].startswith("#EXTINF"):
-            extinf_line = lines[i].strip()
+            extinf_line = lines[i]
 
             if i + 1 < len(lines) and not lines[i + 1].startswith("#EXTINF"):
                 original_url = lines[i + 1].strip()
-                stream_id = f"channel_{i//2}"
-                hls_output = f"{HLS_DIR}/{stream_id}.m3u8"
+                channel_name = f"channel{i//2}"
 
-                # Start FFmpeg restreaming
-                ffmpeg_cmd = [
-                    "ffmpeg",
-                    "-i", original_url,
-                    "-c:v", "copy",
-                    "-c:a", "aac",
-                    "-b:a", "128k",
-                    "-f", "hls",
-                    "-hls_time", "10",
-                    "-hls_list_size", "5",
-                    "-hls_flags", "delete_segments",
-                    hls_output
-                ]
-                subprocess.Popen(ffmpeg_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                # Start FFmpeg restream for each channel
+                start_ffmpeg(channel_name, original_url)
 
-                # Create the new entry with the restreamed link
-                restreamed_url = f"{request.host_url}hls/{stream_id}.m3u8"
-                channels.append(f"{extinf_line}\n{restreamed_url}")
+                # Create new permanent streaming URL
+                new_url = f"https://{request.host}/hls/{channel_name}.m3u8"
+                new_channels.append(f"{extinf_line}\n{new_url}")
 
         i += 1
-    return channels
 
+    return "#EXTM3U\n" + "\n".join(new_channels)
 
+# Routes
 @app.route("/")
 def home():
-    return "IPTV Restreaming Server is Running!"
-
+    return "IPTV HLS Restreaming Service is Running!"
 
 @app.route("/playlist")
 def serve_playlist():
-    """Serve the dynamically generated playlist."""
-    lines = load_playlist()
-    channels = parse_m3u(lines)
+    return Response(generate_m3u(), mimetype="text/plain")
 
-    # Save the new playlist
-    with open(OUTPUT_PLAYLIST, "w", encoding="utf-8") as f:
-        f.write("#EXTM3U\n" + "\n".join(channels))
-
-    return Response("#EXTM3U\n" + "\n".join(channels), mimetype="text/plain")
-
-
-@app.route("/hls/<path:filename>")
-def serve_hls(filename):
-    """Serve HLS .m3u8 files."""
-    hls_path = os.path.join(HLS_DIR, filename)
+@app.route("/hls/<channel_name>.m3u8")
+def serve_hls(channel_name):
+    hls_path = f"{HLS_OUTPUT_FOLDER}/{channel_name}.m3u8"
     if os.path.exists(hls_path):
-        return send_file(hls_path)
-    return "File not found", 404
+        with open(hls_path, "r") as f:
+            return Response(f.read(), mimetype="application/vnd.apple.mpegurl")
+    return "Channel not found", 404
 
+@app.route("/start_stream/<channel_name>/<path:channel_url>")
+def start_stream(channel_name, channel_url):
+    output_hls = start_ffmpeg(channel_name, channel_url)
+    return jsonify({"message": "Streaming started", "url": f"https://{request.host}/hls/{channel_name}.m3u8"})
+
+@app.route("/stop_stream/<channel_name>")
+def stop_stream(channel_name):
+    if channel_name in active_streams:
+        active_streams[channel_name].terminate()
+        del active_streams[channel_name]
+        return jsonify({"message": f"Stream {channel_name} stopped."})
+    return jsonify({"error": "Stream not found."}), 404
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000)
