@@ -1,47 +1,58 @@
-from flask import Flask, Response
+import os
+import subprocess
+from flask import Flask, jsonify, request
 
 app = Flask(__name__)
 
-# Load and clean M3U file from disk
-def load_playlist():
-    with open("playlist.m3u", "r", encoding="utf-8") as f:
-        lines = [line.strip() for line in f if line.strip()]  # Remove blank lines
-    return lines
+# Function to download FFmpeg if not available
+def install_ffmpeg():
+    if not os.path.exists("ffmpeg"):
+        print("Downloading FFmpeg...")
+        os.system("curl -L https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-i686-static.tar.xz -o ffmpeg.tar.xz")
+        os.system("tar -xf ffmpeg.tar.xz --strip-components=1 --wildcards '*/ffmpeg'")
+        os.system("rm -f ffmpeg.tar.xz")
+        os.system("chmod +x ffmpeg")
+        print("FFmpeg installed!")
 
-# Parse M3U file and extract channels with URLs
-def parse_m3u(lines):
-    channels = []
-    i = 0
-    while i < len(lines):
-        if lines[i].startswith("#EXTINF"):
-            extinf_line = lines[i].strip()
-            
-            # Ensure there is a next line (URL) and it's not another #EXTINF
-            if i + 1 < len(lines) and not lines[i + 1].startswith("#EXTINF"):
-                url = lines[i + 1].strip()
-                channels.append(f"{extinf_line}\n{url}")
-            else:
-                print(f"⚠️ Skipping: {extinf_line} (No valid URL found)")
-        
-        i += 1
-    return channels
+# Call FFmpeg installer on startup
+install_ffmpeg()
 
-# Generate a valid M3U playlist
-def generate_m3u(channels):
-    return "#EXTM3U\n" + "\n".join(channels)
-
-@app.route("/")
-def home():
-    return "IPTV Backend is Running!"
-
-@app.route("/playlist")
-def serve_playlist():
-    lines = load_playlist()
-    channels = parse_m3u(lines)
-
+# Function to convert IPTV stream to HLS format
+def restream_to_hls(original_url, output_file):
+    cmd = [
+        "./ffmpeg", "-i", original_url, "-c:v", "copy", "-c:a", "aac",
+        "-b:a", "128k", "-f", "hls", "-hls_time", "10", "-hls_list_size", "5", output_file
+    ]
     
+    subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    return output_file
 
-    return Response(generate_m3u(channels), mimetype="text/plain")
+# Sample IPTV sources
+IPTV_SOURCES = {
+    "Channel 1": "http://example.com/stream1.ts",
+    "Channel 2": "http://example.com/stream2.m3u8",
+    "Channel 3": "http://example.com/stream3.mp4",
+}
 
+# API Endpoint to generate M3U playlist
+@app.route("/playlist", methods=["GET"])
+def generate_playlist():
+    playlist_content = "#EXTM3U\n"
+    
+    for name, url in IPTV_SOURCES.items():
+        hls_output = f"{name.replace(' ', '_')}.m3u8"
+        restream_to_hls(url, hls_output)
+        
+        playlist_content += f"#EXTINF:-1,{name}\n"
+        playlist_content += f"https://nutty-heda-kkkjj-65a305de.koyeb.app/{hls_output}\n"
+
+    return playlist_content, 200, {'Content-Type': 'text/plain'}
+
+# Serve HLS files
+@app.route("/<path:filename>", methods=["GET"])
+def serve_hls(filename):
+    return f"Serving HLS file: {filename}"
+
+# Run Flask App
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000)
