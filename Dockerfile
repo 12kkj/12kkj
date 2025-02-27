@@ -1,26 +1,20 @@
-# Use a minimal Python image
-FROM python:3.9-slim
+# Base image
+FROM python:3.9
 
 # Install dependencies
 RUN apt-get update && apt-get install -y ffmpeg && apt-get clean
 
-# Verify FFmpeg installation
-RUN ffmpeg -version
-
-# Set the working directory
+# Set working directory
 WORKDIR /app
 
-# Copy all project files
+# Copy app files
 COPY . /app
 
-# Install Python dependencies
-RUN pip install --no-cache-dir -r requirements.txt
+# Install required Python packages
+RUN pip install -r requirements.txt
 
-# Ensure HLS output folder exists
-RUN mkdir -p /app/hls_output
-
-# Expose port 5000
+# Expose port
 EXPOSE 5000
 
-# Start the server with Gunicorn
-CMD ["gunicorn", "--bind", "0.0.0.0:5000", "server:app"]
+
+CMD ["gunicorn", "--bind", "0.0.0.0:5000", "server:app", "python", "server.py"]
