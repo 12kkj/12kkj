@@ -1,47 +1,29 @@
 from flask import Flask, Response
+import subprocess
 
 app = Flask(__name__)
 
-# Load and clean M3U file from disk
-def load_playlist():
-    with open("playlist.m3u", "r", encoding="utf-8") as f:
-        lines = [line.strip() for line in f if line.strip()]  # Remove blank lines
-    return lines
+# FFmpeg command to restream the given URL
+def restream_channel(url):
+    command = [
+        "ffmpeg",
+        "-i", url,            # Input URL from the playlist
+        "-c:v", "copy",       # Copy video codec
+        "-c:a", "copy",       # Copy audio codec
+        "-f", "mpegts",       # Output format
+        "pipe:1"              # Output to the response
+    ]
+    return subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
 
-# Parse M3U file and extract channels with URLs
-def parse_m3u(lines):
-    channels = []
-    i = 0
-    while i < len(lines):
-        if lines[i].startswith("#EXTINF"):
-            extinf_line = lines[i].strip()
-            
-            # Ensure there is a next line (URL) and it's not another #EXTINF
-            if i + 1 < len(lines) and not lines[i + 1].startswith("#EXTINF"):
-                url = lines[i + 1].strip()
-                channels.append(f"{extinf_line}\n{url}")
-            else:
-                print(f"⚠️ Skipping: {extinf_line} (No valid URL found)")
-        
-        i += 1
-    return channels
-
-# Generate a valid M3U playlist
-def generate_m3u(channels):
-    return "#EXTM3U\n" + "\n".join(channels)
+# Serve a single channel as an HLS stream
+@app.route("/stream/<path:url>")
+def stream(url):
+    process = restream_channel(url)
+    return Response(process.stdout, mimetype="video/mp2t")
 
 @app.route("/")
 def home():
-    return "IPTV Backend is Running!"
-
-@app.route("/playlist")
-def serve_playlist():
-    lines = load_playlist()
-    channels = parse_m3u(lines)
-
-    
-
-    return Response(generate_m3u(channels), mimetype="text/plain")
+    return "IPTV Restreaming Server is Running!"
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000)
