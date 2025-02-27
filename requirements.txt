@@ -1,4 +1,2 @@
 flask
-ffmpeg-python
 gunicorn
-requests
