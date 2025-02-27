@@ -1,17 +1,20 @@
-# 🔹 Use Python Base Image
+# Use the official Python image as base
 FROM python:3.9
 
-# 🔹 Set Working Directory
+# Set the working directory
 WORKDIR /app
 
-# 🔹 Copy Files
+# Copy the current directory contents into the container at /app
 COPY . .
 
-# 🔹 Install Dependencies
+# Install any needed packages specified in requirements.txt
 RUN pip install -r requirements.txt
 
-# 🔹 Expose Port
+# Expose port 5000 for the Flask app
 EXPOSE 5000
 
-# 🔹 Start Server
+# Define environment variable for Koyeb public domain (set this in your Koyeb dashboard as well)
+# ENV KOYEB_PUBLIC_DOMAIN=your-koyeb-app-domain
+
+# Run the application using gunicorn
 CMD ["gunicorn", "-b", "0.0.0.0:5000", "server:app"]
