@@ -1,20 +1,17 @@
-# Use an official Python image that includes FFmpeg
-FROM jrottenberg/ffmpeg:4.4-ubuntu
+# 🔹 Use Python Base Image
+FROM python:3.9
 
-# Install Python
-RUN apt-get update && apt-get install -y python3 python3-pip
-
-# Set working directory
+# 🔹 Set Working Directory
 WORKDIR /app
 
-# Copy all project files
-COPY . /app
+# 🔹 Copy Files
+COPY . .
 
-# Install Python dependencies
-RUN pip3 install --no-cache-dir -r requirements.txt
+# 🔹 Install Dependencies
+RUN pip install -r requirements.txt
 
-# Expose Flask port
+# 🔹 Expose Port
 EXPOSE 5000
 
-# Run the Flask server
-CMD ["python3", "server.py"]
+# 🔹 Start Server
+CMD ["gunicorn", "-b", "0.0.0.0:5000", "server:app"]
