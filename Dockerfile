@@ -1,20 +1,20 @@
-# Base image
-FROM python:3.9
+# Use official Python image
+FROM python:3.13
 
-# Install dependencies
-RUN apt-get update && apt-get install -y ffmpeg && apt-get clean
+# Install FFmpeg and dependencies
+RUN apt update && apt install -y ffmpeg
 
-# Set working directory
+# Set the working directory inside the container
 WORKDIR /app
 
-# Copy app files
+# Copy all files from the repository into the container
 COPY . /app
 
-# Install required Python packages
-RUN pip install -r requirements.txt
+# Install Python dependencies
+RUN pip install --no-cache-dir -r requirements.txt
 
-# Expose port
+# Expose port 5000
 EXPOSE 5000
 
-
-CMD ["gunicorn", "--bind", "0.0.0.0:5000", "server:app", "python", "server.py"]
+# Run the server
+CMD ["python", "server.py"]
