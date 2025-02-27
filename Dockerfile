@@ -18,3 +18,4 @@ EXPOSE 5000
 
 # Start the server using Gunicorn for production
 CMD ["gunicorn", "--bind", "0.0.0.0:5000", "server:app"]
+
